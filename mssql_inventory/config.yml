@@ -1,35 +1,29 @@
 
 services:
   default_config: &default
-    DATABASE_URL: mssql+pyodbc://sql_helper:Abcd1234@db01.kaskade.local:1433/inventory?driver=ODBC+Driver+17+for+SQL+Server
+    # Use ODBC Driver 18 (the image installs msodbcsql18). If you prefer Driver 17,
+    # install msodbcsql17 in the image instead.
+  # Allow self-signed certificates in lab/dev environments by trusting the server
+  # certificate (TrustServerCertificate=yes). For production, remove this and use
+  # a proper CA-signed cert.
+    DATABASE_URL: "mssql+pyodbc://sql_helper:Abcd1234@db01.kaskade.local:1433/inventory?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
     TIMEOUT_SECONDS: 30
     MAX_RETRIES: 3
     COMPLEX: NONE
-    # Default value is JSON, can be overridden to NONE  
+    # Default value is NONE for MSSQL (can be overridden)
 
   supplier_creator:
     <<: *default
-    WAIT_TIME: [300, 900]
+    PREGENERATE_COUNT: 0
+    WAIT_TIME_MS: [300000, 900000]
     TYPE: ["manufacturer", "wholesaler", "distributor", "retailer"]
     NUM_PROCESSES: 1
 
   orders_creator:
     <<: *default
     NUM_PROCESSES: 4
-    WAIT_TIME: [5,10]
-    STATUS:
-      created: 50
-      pending: 8
-      shipped: 20
-      delivered: 10
-      others: 12
-    RETENTION_HOURS: 240
-
-  orders_creator:
-    <<: *default
-    NUM_PROCESSES: 4
-    WAIT_TIME: [1,15]
-    TYPE: [{"name":"vehicle", "provider":"VehicleProvider", "method":"fake.vehicle_object()"},{"name":"music","provider":"MusicProvider","method":"fake.music_genre_object()"}]
+    WAIT_TIME_MS: [1000, 15000]
+    TYPE: [{"name":"vehicle", "provider":"VehicleProvider", "method":"fake.vehicle_object()"}, {"name":"music", "provider":"MusicProvider", "method":"fake.music_genre_object()"}]
     STATUS:
       created: 50
       pending: 8
@@ -41,7 +35,7 @@ services:
   orders_modifier:
     <<: *default
     NUM_PROCESSES: 4
-    WAIT_TIME: [3,15]
+    WAIT_TIME_MS: [3000, 15000]
     STATUS:
       cancelled: 8
       shipped: 12
@@ -52,6 +46,6 @@ services:
   orders_purger:
     <<: *default
     NUM_PROCESSES: 1
-    WAIT_TIME: [6,12]
+    WAIT_TIME_MS: [6000, 12000]
     RETENTION_HOURS: 3
     BATCH_SIZE: 500

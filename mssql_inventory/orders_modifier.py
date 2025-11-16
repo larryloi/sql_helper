@@ -24,7 +24,8 @@ config = load_config()
 default_config = config['services']['default_config']
 service_config = config['services']['orders_modifier']
 
-wait_time = service_config['WAIT_TIME']
+# wait_time in ms
+wait_time_ms = service_config.get('WAIT_TIME_MS', service_config.get('WAIT_TIME'))
 status = service_config['STATUS']
 num_processes = service_config['NUM_PROCESSES']
 rand_last_hours = service_config['RAND_LAST_HOURS']
@@ -38,8 +39,13 @@ def modify_data():
     orders = Table('orders', metadata, autoload_with=engine, schema=schema)
 
     while True:
-        wait_time_seconds = random.randint(wait_time[0], wait_time[1])
-        time.sleep(wait_time_seconds)
+        # pick random wait in milliseconds
+        wait_ms = random.randint(int(wait_time_ms[0]), int(wait_time_ms[1]))
+        logging.info(f"Waiting {wait_ms} ms before next modification")
+        # interruptible sleep in small slices
+        end_time = time.time() + (wait_ms / 1000.0)
+        while time.time() < end_time:
+            time.sleep(min(0.1, end_time - time.time()))
 
         with engine.connect() as connection:
             try:

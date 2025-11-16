@@ -3,12 +3,13 @@ import json
 import random
 import sqlalchemy
 from datetime import datetime
-from sqlalchemy import Table, MetaData
+from sqlalchemy import Table, MetaData, select, func
 from faker_vehicle import VehicleProvider
 from faker_music import MusicProvider
 import logging
 
 from base_creator import BaseCreator
+from suppliers_creator import SupplierCreator
 
 
 class OrdersCreator(BaseCreator):
@@ -21,6 +22,11 @@ class OrdersCreator(BaseCreator):
         """Initialize the OrdersCreator."""
         super().__init__('orders_creator')
         self._load_orders_config()
+        # default supplier id range (keeps previous behavior as fallback)
+        self.min_supplier_id = 1
+        self.max_supplier_id = 150
+        # ensure suppliers exist / pre-generate if requested
+        self._prepare_suppliers()
         
     def _load_orders_config(self):
         """Load orders-specific configuration."""
@@ -78,10 +84,13 @@ class OrdersCreator(BaseCreator):
             weights=list(self.orders_status.values())
         )[0]
         
+        # pick supplier id from the available range
+        supplier_id = random.randint(self.min_supplier_id, self.max_supplier_id)
+
         # Generate order data
         order_data = {
             "order_id": str(uuid.uuid4()),
-            "supplier_id": random.randint(1, 150),
+            "supplier_id": supplier_id,
             "item_id": random.randint(1, 100),
             "status": random_orders_status,
             "qty": random.randint(1, 20) * 100,
@@ -95,6 +104,70 @@ class OrdersCreator(BaseCreator):
         }
         
         return order_data
+
+    def _prepare_suppliers(self):
+        """Ensure suppliers exist before orders insertion.
+
+        This will pre-generate suppliers according to `services.supplier_creator.PREGENERATE_COUNT`
+        (if present), and set `self.min_supplier_id` and `self.max_supplier_id` based on the
+        suppliers table.
+        """
+        supplier_cfg = self.config['services'].get('supplier_creator', {})
+        pre_count = int(supplier_cfg.get('PREGENERATE_COUNT', 0))
+
+        engine = self.get_engine()
+        metadata = MetaData()
+        suppliers_table = Table('suppliers', metadata, autoload_with=engine)
+
+        try:
+            with engine.connect() as conn:
+                existing = int(conn.execute(select(func.count()).select_from(suppliers_table)).scalar() or 0)
+                to_create = max(0, pre_count - existing)
+
+                # If there are no suppliers at all and PREGENERATE_COUNT==0, create 1 so orders can reference
+                if existing == 0 and pre_count == 0:
+                    to_create = 1
+
+                if to_create > 0:
+                    logging.info(f"Pre-generating {to_create} suppliers before running orders creator")
+                    supplier_creator = SupplierCreator()
+                    for _ in range(to_create):
+                        supplier_data = supplier_creator.generate_supplier_data(conn)
+                        with conn.begin():
+                            conn.execute(suppliers_table.insert().values(supplier_data))
+                    logging.info(f"Pre-generated {to_create} suppliers")
+                else:
+                    logging.info(f"No pre-generation required: existing suppliers={existing}, PREGENERATE_COUNT={pre_count}")
+
+                # query min/max id
+                row = conn.execute(select(func.min(suppliers_table.c.id), func.max(suppliers_table.c.id))).fetchone()
+                min_id, max_id = row if row is not None else (None, None)
+
+                if min_id is None or max_id is None:
+                    # fallback values
+                    self.min_supplier_id = 1
+                    self.max_supplier_id = max(1, existing + to_create)
+                else:
+                    self.min_supplier_id = int(min_id)
+                    self.max_supplier_id = int(max_id)
+
+                logging.info(f"Supplier ID range set to {self.min_supplier_id}..{self.max_supplier_id}")
+
+        except Exception as e:
+            logging.warning(f"Unable to prepare suppliers automatically: {e}")
+            # keep fallback range
+            return
+        finally:
+            # Dispose any engine created during pre-generation in the parent process so
+            # it won't be inherited by child processes (avoids "Command Out of Sync" and
+            # lost connection errors caused by sharing DB connections across forks).
+            try:
+                if hasattr(self, 'db_handler') and self.db_handler and self.db_handler.engine:
+                    self.db_handler.close()
+                    logging.info("Closed parent DB engine after pre-generation to avoid fork-safety issues")
+            except Exception:
+                # don't let cleanup errors prevent startup
+                pass
         
     def insert_data(self):
         """

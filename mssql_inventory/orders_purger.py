@@ -24,7 +24,8 @@ config = load_config()
 default_config = config['services']['default_config']
 service_config = config['services']['orders_purger']
 
-wait_time = service_config['WAIT_TIME']
+# wait_time in milliseconds
+wait_time_ms = service_config.get('WAIT_TIME_MS', service_config.get('WAIT_TIME'))
 num_processes = service_config['NUM_PROCESSES']
 retention_hours = service_config['RETENTION_HOURS']
 batch_size = service_config['BATCH_SIZE']
@@ -38,9 +39,12 @@ def purge_data():
     orders = Table('orders', metadata, autoload_with=engine, schema=schema)
 
     while True:
-        wait_time_seconds = random.randint(wait_time[0], wait_time[1])
-        logging.info(f"RETENTION_HOURS: {retention_hours}; Waiting for {wait_time_seconds} seconds before purging...")
-        time.sleep(wait_time_seconds)
+        wait_ms = random.randint(int(wait_time_ms[0]), int(wait_time_ms[1]))
+        logging.info(f"RETENTION_HOURS: {retention_hours}; Waiting for {wait_ms} ms before purging...")
+        # interruptible sleep
+        end_time = time.time() + (wait_ms / 1000.0)
+        while time.time() < end_time:
+            time.sleep(min(0.1, end_time - time.time()))
 
         with engine.connect() as connection:
             try:

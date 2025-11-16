@@ -51,7 +51,8 @@ class BaseCreator(ABC):
         
         # Load service-specific configuration
         self.service_config = self.config['services'][self.service_name]
-        self.wait_time = self.service_config['WAIT_TIME']
+        # WAIT_TIME_MS holds [min_ms, max_ms]
+        self.wait_time = self.service_config.get('WAIT_TIME_MS', self.service_config.get('WAIT_TIME'))
         self.num_processes = self.service_config['NUM_PROCESSES']
         
     def _init_database(self):
@@ -72,12 +73,15 @@ class BaseCreator(ABC):
         
     def get_random_wait_time(self):
         """Get random wait time based on configuration."""
-        return random.randint(self.wait_time[0], self.wait_time[1])
+        # returns milliseconds
+        return random.randint(int(self.wait_time[0]), int(self.wait_time[1]))
         
     def sleep_random_time(self):
         """Sleep for a random amount of time."""
-        wait_time_seconds = self.get_random_wait_time()
-        time.sleep(wait_time_seconds)
+        wait_ms = random.randint(int(self.wait_time[0]), int(self.wait_time[1]))
+        # Log the chosen sleep time (ms)
+        logging.info(f"{self.service_name}: Sleeping {wait_ms} ms")
+        time.sleep(wait_ms / 1000.0)
         
     @abstractmethod
     def insert_data(self):

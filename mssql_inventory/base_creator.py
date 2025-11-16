@@ -42,7 +42,8 @@ class BaseCreator(ABC):
         self.max_retries = self.default_config['MAX_RETRIES']
 
         self.service_config = self.config['services'][self.service_name]
-        self.wait_time = self.service_config['WAIT_TIME']
+        # WAIT_TIME_MS holds [min_ms, max_ms]
+        self.wait_time = self.service_config.get('WAIT_TIME_MS', self.service_config.get('WAIT_TIME'))
         self.num_processes = self.service_config['NUM_PROCESSES']
 
         # optional schema for MSSQL (e.g. inventory.INV)
@@ -60,10 +61,14 @@ class BaseCreator(ABC):
         self.db_handler.close()
 
     def get_random_wait_time(self):
-        return random.randint(self.wait_time[0], self.wait_time[1])
+        # return milliseconds
+        return random.randint(int(self.wait_time[0]), int(self.wait_time[1]))
 
     def sleep_random_time(self):
-        time.sleep(self.get_random_wait_time())
+        wait_ms = self.get_random_wait_time()
+        logging.info(f"{self.service_name}: Sleeping {wait_ms} ms")
+        # sleep in seconds
+        time.sleep(wait_ms / 1000.0)
 
     def get_table(self, table_name, engine):
         from sqlalchemy import Table, MetaData

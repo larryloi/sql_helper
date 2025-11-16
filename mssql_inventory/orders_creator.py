@@ -6,12 +6,19 @@ from base_creator import BaseCreator
 import random
 from faker import Faker
 import uuid
+from sqlalchemy import Table, MetaData, select, func, Column, Integer, String, DateTime, Float, Text
+from supplier_creator import SupplierCreator
 
 
 class OrdersCreator(BaseCreator):
     def __init__(self):
         super().__init__('orders_creator')
         self._load_orders_config()
+        # default supplier id range
+        self.min_supplier_id = 1
+        self.max_supplier_id = 150
+        # ensure suppliers exist / pre-generate if requested
+        self._prepare_suppliers()
 
     def _load_orders_config(self):
         self.orders_status = self.service_config['STATUS']
@@ -46,7 +53,7 @@ class OrdersCreator(BaseCreator):
 
         order_data = {
             "order_id": str(uuid.uuid4()),
-            "supplier_id": random.randint(1, 150),
+            "supplier_id": random.randint(self.min_supplier_id, self.max_supplier_id),
             "item_id": random.randint(1, 100),
             "status": random_orders_status,
             "qty": random.randint(1, 20) * 100,
@@ -61,9 +68,110 @@ class OrdersCreator(BaseCreator):
 
         return order_data
 
+    def _prepare_suppliers(self):
+        """Ensure suppliers exist before orders insertion.
+
+        This will pre-generate suppliers according to `services.supplier_creator.PREGENERATE_COUNT`
+        (if present), and set `self.min_supplier_id` and `self.max_supplier_id` based on the
+        suppliers table.
+        """
+        supplier_cfg = self.config['services'].get('supplier_creator', {})
+        pre_count = int(supplier_cfg.get('PREGENERATE_COUNT', 0))
+
+        engine = self.get_engine()
+        metadata = MetaData()
+
+        try:
+            # Try to reflect the existing table; if it doesn't exist, create a simple suppliers table
+            try:
+                suppliers_table = Table('suppliers', metadata, autoload_with=engine, schema=self.schema if hasattr(self, 'schema') else None)
+            except Exception as reflect_exc:
+                # If table missing, create it with a basic schema so pre-generation can proceed
+                logging.info("`suppliers` table not found; creating basic suppliers table")
+                suppliers_table = Table(
+                    'suppliers', metadata,
+                    Column('id', Integer, primary_key=True, autoincrement=True),
+                    Column('name', String(255)),
+                    Column('type', String(64)),
+                    Column('created_at', DateTime),
+                    Column('updated_at', DateTime),
+                    schema=self.schema if hasattr(self, 'schema') else None
+                )
+                metadata.create_all(engine)
+
+            with engine.connect() as conn:
+                existing = int(conn.execute(select(func.count()).select_from(suppliers_table)).scalar() or 0)
+                to_create = max(0, pre_count - existing)
+
+                # If there are no suppliers at all and PREGENERATE_COUNT==0, create 1 so orders can reference
+                if existing == 0 and pre_count == 0:
+                    to_create = 1
+
+                if to_create > 0:
+                    logging.info(f"Pre-generating {to_create} suppliers before running orders creator")
+                    supplier_creator = SupplierCreator()
+                    for _ in range(to_create):
+                        supplier_data = supplier_creator.generate_supplier_data(conn)
+                        with conn.begin():
+                            conn.execute(suppliers_table.insert().values(supplier_data))
+                    logging.info(f"Pre-generated {to_create} suppliers")
+                else:
+                    logging.info(f"No pre-generation required: existing suppliers={existing}, PREGENERATE_COUNT={pre_count}")
+
+                # query min/max id
+                row = conn.execute(select(func.min(suppliers_table.c.id), func.max(suppliers_table.c.id))).fetchone()
+                min_id, max_id = row if row is not None else (None, None)
+
+                if min_id is None or max_id is None:
+                    # fallback values
+                    self.min_supplier_id = 1
+                    self.max_supplier_id = max(1, existing + to_create)
+                else:
+                    self.min_supplier_id = int(min_id)
+                    self.max_supplier_id = int(max_id)
+
+                logging.info(f"Supplier ID range set to {self.min_supplier_id}..{self.max_supplier_id}")
+
+        except Exception as e:
+            logging.warning(f"Unable to prepare suppliers automatically: {e}")
+            # keep fallback range
+            return
+        finally:
+            # Dispose any engine created during pre-generation in the parent process so
+            # it won't be inherited by child processes (avoids fork-safety issues).
+            try:
+                if hasattr(self, 'db_handler') and self.db_handler and self.db_handler.engine:
+                    self.db_handler.close()
+                    logging.info("Closed parent DB engine after pre-generation to avoid fork-safety issues")
+            except Exception:
+                pass
+
     def insert_data(self):
         engine = self.get_engine()
-        orders_table = self.get_table(self.get_table_name(), engine)
+        # Ensure orders table exists; if not, create a minimal schema so inserts can proceed
+        try:
+            orders_table = self.get_table(self.get_table_name(), engine)
+        except Exception:
+            logging.info("`orders` table not found; creating basic orders table")
+            metadata = MetaData()
+            orders_table = Table(
+                'orders', metadata,
+                Column('id', Integer, primary_key=True, autoincrement=True),
+                Column('order_id', String(64)),
+                Column('supplier_id', Integer),
+                Column('item_id', Integer),
+                Column('status', String(64)),
+                Column('qty', Integer),
+                Column('net_price', Integer),
+                Column('tax_rate', Float),
+                Column('issued_at', DateTime),
+                Column('completed_at', DateTime),
+                Column('spec', Text),
+                Column('created_at', DateTime),
+                Column('updated_at', DateTime),
+                schema=self.schema if hasattr(self, 'schema') else None
+            )
+            metadata.create_all(engine)
 
         while True:
             self.sleep_random_time()

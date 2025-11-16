@@ -47,7 +47,7 @@ class OrdersModifierConfig:
     
     def _validate_config(self) -> None:
         """Validate required configuration parameters."""
-        required_keys = ['DATABASE_URL', 'WAIT_TIME', 'STATUS', 'NUM_PROCESSES', 'RAND_LAST_HOURS']
+        required_keys = ['DATABASE_URL', 'WAIT_TIME_MS', 'STATUS', 'NUM_PROCESSES', 'RAND_LAST_HOURS']
         for key in required_keys:
             if key not in self.service_config:
                 raise ValueError(f"Missing required configuration key: {key}")
@@ -57,8 +57,9 @@ class OrdersModifierConfig:
         return self.service_config['DATABASE_URL']
     
     @property
-    def wait_time(self) -> List[int]:
-        return self.service_config['WAIT_TIME']
+    def wait_time_ms(self) -> List[int]:
+        """Return wait time range in milliseconds [min_ms, max_ms]."""
+        return self.service_config['WAIT_TIME_MS']
     
     @property
     def status(self) -> Dict[str, float]:
@@ -239,20 +240,22 @@ class OrdersModifier:
             
             while not shutdown_event.is_set():
                 try:
-                    wait_time_seconds = random.randint(
-                        self.config.wait_time[0],
-                        self.config.wait_time[1]
+                    # pick a random wait time in milliseconds
+                    wait_ms = random.randint(
+                        int(self.config.wait_time_ms[0]),
+                        int(self.config.wait_time_ms[1])
                     )
-                    
-                    self.logger.debug(
-                        f"Process {self.process_id}: Waiting {wait_time_seconds} seconds before next update"
+
+                    self.logger.info(
+                        f"Process {self.process_id}: Waiting {wait_ms} ms before next update"
                     )
-                    
-                    # Interruptible sleep
-                    for _ in range(wait_time_seconds):
-                        if shutdown_event.is_set():
-                            break
-                        time.sleep(1)
+
+
+                    # Interruptible sleep in short slices (max 0.1s) to be responsive to shutdown
+                    end_time = time.time() + (wait_ms / 1000.0)
+                    while time.time() < end_time and not shutdown_event.is_set():
+                        remaining = end_time - time.time()
+                        time.sleep(min(0.1, max(0.0, remaining)))
                     
                     if shutdown_event.is_set():
                         break

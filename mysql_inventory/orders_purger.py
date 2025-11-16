@@ -46,14 +46,14 @@ class OrdersPurgerConfig:
     
     def _validate_config(self) -> None:
         """Validate required configuration parameters."""
-        required_keys = ['DATABASE_URL', 'WAIT_TIME', 'RETENTION_HOURS', 'BATCH_SIZE']
+        required_keys = ['DATABASE_URL', 'WAIT_TIME_MS', 'RETENTION_HOURS', 'BATCH_SIZE']
         for key in required_keys:
             if key not in self.service_config:
                 raise ValueError(f"Missing required configuration key: {key}")
         
         # Validate ranges
-        if len(self.service_config['WAIT_TIME']) != 2:
-            raise ValueError("WAIT_TIME must be a list with exactly 2 elements [min, max]")
+        if len(self.service_config['WAIT_TIME_MS']) != 2:
+            raise ValueError("WAIT_TIME_MS must be a list with exactly 2 elements [min_ms, max_ms]")
         
         if self.service_config['BATCH_SIZE'] <= 0:
             raise ValueError("BATCH_SIZE must be positive")
@@ -67,7 +67,8 @@ class OrdersPurgerConfig:
     
     @property
     def wait_time(self) -> List[int]:
-        return self.service_config['WAIT_TIME']
+        """Return wait time range in milliseconds [min_ms, max_ms]."""
+        return self.service_config['WAIT_TIME_MS']
     
     @property
     def retention_hours(self) -> int:
@@ -286,10 +287,12 @@ class OrdersPurger:
     def run(self) -> None:
         """Main execution loop for the orders purger."""
         self.logger.info(f"Starting orders purger (PID: {os.getpid()})")
+        min_s = int(self.config.wait_time[0]) / 1000.0
+        max_s = int(self.config.wait_time[1]) / 1000.0
         self.logger.info(
             f"Configuration - Retention: {self.config.retention_hours}h, "
             f"Batch Size: {self.config.batch_size}, "
-            f"Wait Time: {self.config.wait_time[0]}-{self.config.wait_time[1]}s"
+            f"Wait Time: {min_s}-{max_s}s ({self.config.wait_time[0]}-{self.config.wait_time[1]} ms)"
         )
         
         if self.config.dry_run:
@@ -311,20 +314,19 @@ class OrdersPurger:
                             table_stats = self._get_table_statistics(connection)
                     
                     # Calculate wait time
-                    wait_time_seconds = random.randint(
-                        self.config.wait_time[0],
-                        self.config.wait_time[1]
+                    # Calculate wait time in milliseconds
+                    wait_ms = random.randint(
+                        int(self.config.wait_time[0]),
+                        int(self.config.wait_time[1])
                     )
-                    
-                    self.logger.debug(
-                        f"Waiting {wait_time_seconds} seconds before next purge cycle"
-                    )
-                    
-                    # Interruptible sleep
-                    for _ in range(wait_time_seconds):
-                        if shutdown_requested:
-                            break
-                        time.sleep(1)
+
+                    self.logger.info(f"Waiting {wait_ms} ms before next purge cycle")
+
+                    # Interruptible sleep in small slices
+                    end_time = time.time() + (wait_ms / 1000.0)
+                    while time.time() < end_time and not shutdown_requested:
+                        remaining = end_time - time.time()
+                        time.sleep(min(0.1, max(0.0, remaining)))
                     
                     if shutdown_requested:
                         break

@@ -26,7 +26,7 @@ help: ## Show this help message
 	@echo "$(YELLOW)Usage: make [target] [options]$(RESET)"
 	@echo ""
 	@echo "$(MAGENTA)Available targets:$(RESET)"
-	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ { printf "  $(CYAN)%-20s$(RESET) %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_.-]+:.*##/ { printf "  $(CYAN)%-20s$(RESET) %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 	@echo ""
 	@echo "$(YELLOW)Options:$(RESET)"
 	@echo "  db=<mysql|mssql>     - Database type (default: mysql)"
@@ -34,9 +34,12 @@ help: ## Show this help message
 	@echo "  tag=<version>        - Docker image tag (default: latest)"
 	@echo ""
 	@echo "$(YELLOW)Examples:$(RESET)"
-	@echo "  make up db=mysql"
-	@echo "  make logs db=mssql service=orders_creator"
-	@echo "  make build tag=v1.0.0"
+	@echo "  make build.app                # build the application image"
+	@echo "  make build.all                # build base + app images"
+	@echo "  make run.shell                # run an interactive shell from the app image"
+	@echo "  make test.config              # lint/validate YAML config files"
+
+
 
 # ===================================
 # Build Targets
@@ -129,162 +132,6 @@ lint: ## Run linting on Python files
 	@echo "$(GREEN)✓ Linting completed$(RESET)"
 
 # ===================================
-# Docker Compose Service Management
-# ===================================
-
-.PHONY: up
-up: ## Start services (usage: make up db=mysql)
-	@echo "$(GREEN)Starting $(db) services...$(RESET)"
-	docker compose --profile $(db) up -d
-	@echo "$(GREEN)✓ Services started successfully$(RESET)"
-
-.PHONY: up.build
-up.build: ## Start services with build (usage: make up.build db=mysql)
-	@echo "$(GREEN)Starting $(db) services with build...$(RESET)"
-	docker compose --profile $(db) up -d --build
-	@echo "$(GREEN)✓ Services started successfully$(RESET)"
-
-.PHONY: up.recreate
-up.recreate: ## Recreate and start services
-	@echo "$(GREEN)Recreating $(db) services...$(RESET)"
-	docker compose --profile $(db) up -d --force-recreate
-	@echo "$(GREEN)✓ Services recreated successfully$(RESET)"
-
-.PHONY: up.single
-up.single: ## Start single service (usage: make up.single db=mysql service=orders_creator)
-	@if [ -z "$(service)" ]; then \
-		echo "$(RED)Error: service parameter required. Usage: make up.single db=mysql service=orders_creator$(RESET)"; \
-		exit 1; \
-	fi
-	@echo "$(GREEN)Starting $(db)_$(service)...$(RESET)"
-	docker compose up $(db)_$(service) -d
-	@echo "$(GREEN)✓ Service started successfully$(RESET)"
-
-.PHONY: down
-down: ## Stop and remove services (usage: make down db=mysql)
-	@echo "$(GREEN)Stopping $(db) services...$(RESET)"
-	docker compose --profile $(db) down
-	@echo "$(GREEN)✓ Services stopped successfully$(RESET)"
-
-.PHONY: down.all
-down.all: ## Stop and remove all services
-	@echo "$(GREEN)Stopping all services...$(RESET)"
-	docker compose --profile all down
-	@echo "$(GREEN)✓ All services stopped successfully$(RESET)"
-
-.PHONY: down.clean
-down.clean: ## Stop services and remove volumes
-	@echo "$(GREEN)Stopping $(db) services and cleaning volumes...$(RESET)"
-	docker compose --profile $(db) down -v
-	@echo "$(GREEN)✓ Services stopped and volumes cleaned$(RESET)"
-
-.PHONY: restart
-restart: down up ## Restart services
-	@echo "$(GREEN)✓ Services restarted successfully$(RESET)"
-
-# ===================================
-# Monitoring & Debugging Targets
-# ===================================
-
-.PHONY: ps status
-ps status: ## Show running services status
-	@echo "$(GREEN)Service Status:$(RESET)"
-	docker compose --profile $(db) ps
-
-.PHONY: ps.all
-ps.all: ## Show all services status
-	@echo "$(GREEN)All Services Status:$(RESET)"
-	docker compose --profile all ps
-
-.PHONY: logs
-logs: ## Follow logs for services (usage: make logs db=mysql)
-	@echo "$(GREEN)Following $(db) service logs...$(RESET)"
-	docker compose --profile $(db) logs -f
-
-.PHONY: logs.single
-logs.single: ## Follow logs for single service (usage: make logs.single db=mysql service=orders_creator)
-	@if [ -z "$(service)" ]; then \
-		echo "$(RED)Error: service parameter required. Usage: make logs.single db=mysql service=orders_creator$(RESET)"; \
-		exit 1; \
-	fi
-	@echo "$(GREEN)Following logs for $(db)_$(service)...$(RESET)"
-	docker compose logs -f $(db)_$(service)
-
-.PHONY: logs.tail
-logs.tail: ## Show last 100 lines of logs
-	@echo "$(GREEN)Showing recent $(db) service logs...$(RESET)"
-	docker compose --profile $(db) logs --tail=100
-
-.PHONY: exec
-exec: ## Execute command in running service (usage: make exec db=mysql service=orders_creator cmd="ls -la")
-	@if [ -z "$(service)" ]; then \
-		echo "$(RED)Error: service parameter required$(RESET)"; \
-		exit 1; \
-	fi
-	@if [ -z "$(cmd)" ]; then \
-		cmd="/bin/bash"; \
-	fi; \
-	echo "$(GREEN)Executing command in $(db)_$(service)...$(RESET)"; \
-	docker compose exec $(db)_$(service) $$cmd
-
-.PHONY: stats
-stats: ## Show container resource usage
-	@echo "$(GREEN)Container Resource Usage:$(RESET)"
-	docker stats --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}"
-
-# ===================================
-# Maintenance Targets
-# ===================================
-
-.PHONY: clean.containers
-clean.containers: ## Remove stopped containers
-	@echo "$(GREEN)Cleaning stopped containers...$(RESET)"
-	docker container prune -f
-	@echo "$(GREEN)✓ Stopped containers cleaned$(RESET)"
-
-.PHONY: clean.images
-clean.images: ## Remove unused images
-	@echo "$(GREEN)Cleaning unused images...$(RESET)"
-	docker image prune -f
-	@echo "$(GREEN)✓ Unused images cleaned$(RESET)"
-
-.PHONY: clean.volumes
-clean.volumes: ## Remove unused volumes
-	@echo "$(GREEN)Cleaning unused volumes...$(RESET)"
-	docker volume prune -f
-	@echo "$(GREEN)✓ Unused volumes cleaned$(RESET)"
-
-.PHONY: clean.networks
-clean.networks: ## Remove unused networks
-	@echo "$(GREEN)Cleaning unused networks...$(RESET)"
-	docker network prune -f
-	@echo "$(GREEN)✓ Unused networks cleaned$(RESET)"
-
-.PHONY: clean.all
-clean.all: clean.containers clean.images clean.volumes clean.networks ## Clean all unused Docker resources
-	@echo "$(GREEN)✓ All unused Docker resources cleaned$(RESET)"
-
-.PHONY: clean.project
-clean.project: down.all ## Clean all project containers and images
-	@echo "$(GREEN)Cleaning project containers and images...$(RESET)"
-	docker compose --profile all down --rmi all -v
-	@echo "$(GREEN)✓ Project resources cleaned$(RESET)"
-
-# ===================================
-# Health Check Targets
-# ===================================
-
-.PHONY: health
-health: ## Check service health
-	@echo "$(GREEN)Checking service health...$(RESET)"
-	@docker compose --profile $(db) ps --format "table {{.Service}}\t{{.Status}}\t{{.Health}}"
-
-.PHONY: health.logs
-health.logs: ## Show health check logs
-	@echo "$(GREEN)Health check logs:$(RESET)"
-	@docker compose --profile $(db) logs --grep healthcheck
-
-# ===================================
 # Environment Targets
 # ===================================
 
@@ -305,29 +152,3 @@ version: ## Show version information
 	@echo "Base Version: $(BASE_VER)"
 	@echo "App Version: $(APP_VER)"
 	@echo "Image: $(IMAGE_REPO_ROOT)/$(PROJECT_NAME)-$(APP_NAME):$(APP_VER)"
-
-# ===================================
-# Quick Start Targets
-# ===================================
-
-.PHONY: dev.mysql
-dev.mysql: ## Quick start MySQL development environment
-	@echo "$(GREEN)Starting MySQL development environment...$(RESET)"
-	make build
-	make up db=mysql
-	make logs db=mysql
-
-.PHONY: dev.mssql
-dev.mssql: ## Quick start MSSQL development environment
-	@echo "$(GREEN)Starting MSSQL development environment...$(RESET)"
-	make build
-	make up db=mssql
-	make logs db=mssql
-
-.PHONY: dev.stop
-dev.stop: ## Stop development environment
-	@echo "$(GREEN)Stopping development environment...$(RESET)"
-	make down.all
-
-# Set default target
-.DEFAULT_GOAL := help
