@@ -1,6 +1,7 @@
 import uuid
 import json
 import random
+import string
 import sqlalchemy
 from datetime import datetime
 from sqlalchemy import Table, MetaData, select, func
@@ -33,6 +34,8 @@ class OrdersCreator(BaseCreator):
         self.orders_status = self.service_config['STATUS']
         self.orders_types = self.service_config['TYPE']
         self.complex_config = self.service_config.get('COMPLEX', 'JSON')
+        # Optional size limit for bigtext (KB). Can be number, string number, or 'NONE'/None.
+        self.bigtext_size_kb = self.service_config.get('BIGTEXT_SIZE_KB', self.default_config.get('BIGTEXT_SIZE_KB'))
         
     def get_table_name(self):
         """Return the table name for orders."""
@@ -62,6 +65,51 @@ class OrdersCreator(BaseCreator):
         spec = {"type": type_name, "spec": fake_value}
         return spec
         
+    def _resolve_bigtext_size_bytes(self):
+        """Return desired bigtext size in bytes based on config, or None for NULL.
+        Clamps to a maximum of 10 MiB.
+        """
+        val = self.bigtext_size_kb
+        # Treat unspecified / None / 'NONE' as NULL
+        if val is None:
+            return None
+        if isinstance(val, str):
+            if val.strip().upper() == 'NONE' or val.strip() == '':
+                return None
+            try:
+                val = int(val.strip())
+            except Exception:
+                logging.warning(f"Invalid BIGTEXT_SIZE_KB value '{self.bigtext_size_kb}', setting bigtext to NULL")
+                return None
+        else:
+            try:
+                val = int(val)
+            except Exception:
+                logging.warning(f"Invalid BIGTEXT_SIZE_KB value '{self.bigtext_size_kb}', setting bigtext to NULL")
+                return None
+        if val <= 0:
+            return None
+        max_kb = 10 * 1024  # 10 MiB cap
+        if val > max_kb:
+            logging.warning(f"BIGTEXT_SIZE_KB={val}KB exceeds 10MB cap; clamping to {max_kb}KB")
+            val = max_kb
+        return val * 1024
+
+    def _random_ascii_of_size(self, n_bytes: int) -> str:
+        """Generate a pseudo-random ASCII string of exactly n_bytes length."""
+        if n_bytes <= 0:
+            return ''
+        alphabet = string.ascii_letters + string.digits
+        # Build in chunks to avoid huge single allocations from random.choices
+        chunk_size = min(4096, n_bytes)
+        chunk = ''.join(random.choices(alphabet, k=chunk_size))
+        full_repeats, remainder = divmod(n_bytes, chunk_size)
+        if remainder:
+            tail = ''.join(random.choices(alphabet, k=remainder))
+        else:
+            tail = ''
+        return (chunk * full_repeats) + tail
+
     def generate_order_data(self):
         """
         Generate data for a single order.
@@ -78,6 +126,13 @@ class OrdersCreator(BaseCreator):
         else:
             spec_value = None  # Set spec to NULL if COMPLEX is NONE
             
+        # Compute bigtext value (may be NULL)
+        size_bytes = self._resolve_bigtext_size_bytes()
+        if size_bytes is None:
+            bigtext_value = None
+        else:
+            bigtext_value = self._random_ascii_of_size(size_bytes)
+        
         # Generate random order status based on weights
         random_orders_status = random.choices(
             list(self.orders_status.keys()), 
@@ -99,6 +154,7 @@ class OrdersCreator(BaseCreator):
             "issued_at": datetime.now(self.local_tz),
             "completed_at": datetime.now(self.local_tz),
             "spec": spec_value,
+            "bigtext": bigtext_value,
             "created_at": datetime.now(self.local_tz),
             "updated_at": datetime.now(self.local_tz)
         }

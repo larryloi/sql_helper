@@ -11,6 +11,8 @@ services:
     MAX_RETRIES: 3
     COMPLEX: NONE
     # Default value is NONE for MSSQL (can be overridden)
+    BIGTEXT_SIZE_KB: NONE
+    # Set to a number (in KB) to generate NVARCHAR(MAX) payloads; NONE leaves it NULL
 
   supplier_creator:
     <<: *default

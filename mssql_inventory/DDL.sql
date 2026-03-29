@@ -25,6 +25,7 @@ CREATE TABLE [INV].[orders](
 	[issued_at] [datetime] NOT NULL,
 	[completed_at] [datetime] NULL,
 	[spec] [nvarchar](1024) NULL,
+	[bigtext] [nvarchar](max) NULL,
 	[created_at] [datetime] NULL,
 	[updated_at] [datetime] NULL,
  CONSTRAINT [PK_orders] PRIMARY KEY CLUSTERED 

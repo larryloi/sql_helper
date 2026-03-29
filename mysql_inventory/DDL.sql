@@ -34,6 +34,7 @@ CREATE TABLE orders (
     issued_at DATETIME NOT NULL,
     completed_at DATETIME NULL,
     spec json DEFAULT NULL,
+    bigtext MEDIUMTEXT NULL,
     created_at DATETIME NULL,
     updated_at DATETIME NULL,
     PRIMARY KEY (id)
